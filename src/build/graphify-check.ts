@@ -40,9 +40,9 @@ export function checkGraphify(): GraphifyInfo | null {
     return null;
   }
 
-  // 2. Check if `graphify` CLI is in PATH
+  // 2. Check if `graphify` CLI is in PATH (--help exits 0)
   try {
-    execSync("graphify merge-graphs --help", {
+    execSync("graphify --help", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -54,7 +54,7 @@ export function checkGraphify(): GraphifyInfo | null {
 
   // 3. Try python -m graphify
   try {
-    execSync("python -m graphify merge-graphs --help", {
+    execSync("python -m graphify --help", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });

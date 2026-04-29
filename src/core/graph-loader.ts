@@ -5,14 +5,55 @@ import { log } from "../shared/utils.js";
 
 /**
  * Load graph.json from disk and parse it.
+ * Handles graphify's NetworkX format:
+ *   - Nodes: { id, label, file_type, source_file, source_location, community, norm_label }
+ *   - Edges: stored as "links" with { source, target, relation, confidence_score, confidence, weight }
  */
 export function loadGraphData(graphJsonPath: string): GraphData {
   log.info(`Loading graph from ${graphJsonPath}`);
   const raw = readFileSync(graphJsonPath, "utf-8");
-  const data = JSON.parse(raw) as GraphData;
+  const data = JSON.parse(raw) as Record<string, unknown>;
 
-  log.info(`Loaded graph: ${data.nodes.length} nodes, ${data.edges.length} edges`);
-  return data;
+  // Parse nodes — map graphify fields to our schema
+  const rawNodes = (data.nodes ?? []) as Array<Record<string, unknown>>;
+  const nodes: GraphNode[] = rawNodes.map((n) => {
+    // source_location: "L4" → start_line 4, or "L4-L20" → start 4, end 20
+    let startLine: number | undefined;
+    let endLine: number | undefined;
+    const loc = n.source_location as string | undefined;
+    if (loc) {
+      const match = loc.match(/L(\d+)(?:-L(\d+))?/);
+      if (match) {
+        startLine = parseInt(match[1]!, 10);
+        endLine = match[2] ? parseInt(match[2], 10) : undefined;
+      }
+    }
+
+    return {
+      id: n.id as string,
+      label: (n.label ?? n.id ?? "") as string,
+      type: (n.type ?? n.file_type ?? "unknown") as string,
+      source_file: n.source_file as string | undefined,
+      repo: n.repo as string | undefined,
+      community: n.community != null ? String(n.community) : undefined,
+      start_line: startLine,
+      end_line: endLine,
+      properties: n,
+    };
+  });
+
+  // Parse edges — graphify uses "links" with "relation" instead of "edges" with "type"
+  const rawEdges = (data.edges ?? data.links ?? []) as Array<Record<string, unknown>>;
+  const edges: GraphEdge[] = rawEdges.map((e) => ({
+    source: (e.source ?? e._src ?? e.from ?? "") as string,
+    target: (e.target ?? e._tgt ?? e.to ?? "") as string,
+    type: (e.type ?? e.relation ?? "UNKNOWN") as string,
+    confidence: (e.confidence_score ?? e.confidence_value ?? (typeof e.confidence === "number" ? e.confidence : undefined)) as number | undefined,
+    properties: e,
+  }));
+
+  log.info(`Loaded graph: ${nodes.length} nodes, ${edges.length} edges`);
+  return { nodes, edges };
 }
 
 /**

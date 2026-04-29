@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, copyFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Config } from "../shared/types.js";
@@ -14,21 +14,32 @@ export interface BuildOptions {
 
 /**
  * Python script template for initial graph build via graphify library API.
- * Uses: extract → build_from_json → cluster → to_json
+ * Uses: detect → extract → build_from_json → cluster → to_json
  * This is AST-only (deterministic, no LLM cost).
+ *
+ * Key design decisions:
+ * - Uses detect() instead of collect_files() because detect() applies
+ *   _SKIP_DIRS filtering (venv/, node_modules/, site-packages/, etc.)
+ *   while collect_files() does not, causing RecursionError on repos
+ *   with virtualenvs containing deeply-nested C files.
+ * - Uses forward slashes for paths (Python's Path handles both on Windows).
  */
 function buildPythonScript(repoPath: string, outPath: string): string {
-  // Escape backslashes for Windows paths in Python string literals
-  const pyRepoPath = repoPath.replace(/\\/g, "\\\\");
-  const pyOutPath = outPath.replace(/\\/g, "\\\\");
+  // Use forward slashes — Python Path handles them correctly on all platforms.
+  // Backslash escaping through shell layers is error-prone on Windows.
+  const pyRepoPath = repoPath.replace(/\\/g, "/");
+  const pyOutPath = outPath.replace(/\\/g, "/");
 
   return `
-import sys
+import sys, json
 from pathlib import Path
 
 try:
-    from graphify import extract, build_from_json, cluster, to_json
-    from graphify.extract import collect_files
+    from graphify.detect import detect
+    from graphify.extract import extract
+    from graphify.build import build_from_json
+    from graphify.cluster import cluster
+    from graphify.export import to_json
 except ImportError:
     print("ERROR: graphify not importable", file=sys.stderr)
     sys.exit(1)
@@ -37,14 +48,16 @@ path = Path("${pyRepoPath}")
 out = Path("${pyOutPath}")
 out.mkdir(parents=True, exist_ok=True)
 
-files = collect_files(path)
-if not files:
-    import json
+# Use detect() for proper filtering (skips venv/, node_modules/, site-packages/, etc.)
+result = detect(path)
+code_files = [Path(f) for f in result.get("files", {}).get("code", [])]
+
+if not code_files:
     (out / "graph.json").write_text(json.dumps({"nodes": [], "links": []}))
     print("0 nodes, 0 edges (no code files found)")
     sys.exit(0)
 
-extraction = extract(files, cache_root=path)
+extraction = extract(code_files, cache_root=path)
 G = build_from_json(extraction)
 communities = cluster(G)
 to_json(G, communities, str(out / "graph.json"))
@@ -114,10 +127,13 @@ export async function runBuild(config: Config, configDir: string, options: Build
           // Copy the updated graph to our temp dir
           copyFileSync(existingGraph, join(repoOutDir, "graph.json"));
         } else {
-          // Initial build: use Python API
+          // Initial build: write Python script to temp file and execute.
+          // This avoids quoting/escaping issues with `python -c "..."` on Windows.
           const script = buildPythonScript(repoPath, repoOutDir);
-          log.debug("  Initial build via Python API");
-          const output = execSync(`python -c "${script.replace(/"/g, '\\"')}"`, {
+          const scriptPath = join(tmpDir, `${repo.name}_build.py`);
+          writeFileSync(scriptPath, script);
+          log.debug(`  Initial build via Python API (${scriptPath})`);
+          const output = execSync(`python "${scriptPath}"`, {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
             timeout: 600_000,
