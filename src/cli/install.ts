@@ -19,15 +19,17 @@ MCP server for querying the project's knowledge graph (built by graphify).
 ## Available Tools
 
 ### graph_search
-Full-text search across all graph nodes (functions, classes, modules).
+Full-text search across all graph nodes (functions, classes, modules) with optional BFS/DFS context expansion.
 
 Parameters:
 - \`query\` (required): search text
 - \`top_k\`: max results (default: 10)
 - \`type\`: filter by node type — "function", "class", "module"
 - \`repo\`: filter by repository name
+- \`context_depth\`: BFS/DFS expansion depth from top results (0 = no expansion, default: 0)
+- \`context_mode\`: "bfs" (broad context) or "dfs" (trace specific path). Default: "bfs"
 
-Use when: finding symbols, locating definitions, exploring what exists.
+Use when: finding symbols, locating definitions, exploring what exists. Set context_depth > 0 to also see connected nodes around the results.
 
 ### graph_impact
 Blast radius analysis — find everything that depends on a symbol (downstream) and everything it depends on (upstream).
@@ -60,6 +62,23 @@ Parameters:
 
 Use when: deep-diving into a specific symbol, understanding its role in the architecture.
 
+### graph_community
+List all nodes belonging to a specific community.
+
+Parameters:
+- \`community_id\` (required): community ID or name
+
+Use when: exploring module boundaries, understanding which symbols are clustered together.
+
+### graph_hotspots
+Most connected nodes in the graph — architectural hotspots / god nodes.
+
+Parameters:
+- \`top_n\`: number of results (default: 10)
+- \`metric\`: ranking metric — "degree", "in_degree", "out_degree", "betweenness" (default: "degree")
+
+Use when: identifying critical symbols, finding architectural bottlenecks, prioritizing refactoring targets.
+
 ### graph_outline
 File outline: function signatures, class definitions, imports — without reading the full source.
 
@@ -78,11 +97,13 @@ Use when: checking if the graph is available and up to date.
 
 ## Best Practices
 
-1. **Prefer graph tools over grep/find** — graph_search uses indexed BM25 ranking and understands symbol types.
+1. **Prefer graph tools over grep/find** — graph_search uses indexed ranking and understands symbol types.
 2. **Check impact before refactoring** — run graph_impact on any symbol you plan to modify.
 3. **Use graph_path to trace connections** — faster and more accurate than manually following imports.
-4. **Read GRAPH_REPORT.md** at \`graphify-out/GRAPH_REPORT.md\` for architecture overview, god nodes, and community structure.
-5. **Keep the graph current** — after code changes, run \`graphify update .\` to rebuild (AST-only, no API cost).
+4. **Use graph_hotspots to find god nodes** — high-degree nodes are architectural risks.
+5. **Use context_depth for broad exploration** — set context_depth=2 on graph_search to see the neighborhood around results.
+6. **Read GRAPH_REPORT.md** at \`graphify-out/GRAPH_REPORT.md\` for architecture overview, god nodes, and community structure.
+7. **Keep the graph current** — after code changes, run \`graphify update .\` to rebuild (AST-only, no API cost).
 `;
 
 // ─── Context message injected by hooks ───────────────────────────────────────

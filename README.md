@@ -53,11 +53,13 @@ Requires Node.js >= 18.
 
 | Tool | Description |
 |------|-------------|
-| `graph_search` | Text search across nodes with optional type/repo filters |
+| `graph_search` | Text search across nodes with optional BFS/DFS context expansion |
 | `graph_impact` | BFS blast radius — find all downstream dependents of a symbol |
 | `graph_outline` | Tree-sitter code outline for any file (functions, classes, imports) |
 | `graph_path` | Dijkstra shortest path between two symbols |
 | `graph_explain` | Full detail on a node: edges, community, centrality metrics |
+| `graph_community` | List all nodes belonging to a specific community |
+| `graph_hotspots` | Most connected nodes (god nodes / architectural bottlenecks) |
 | `graph_status` | Graph metadata: node/edge counts, repos, build timestamp |
 
 ## CLI Commands

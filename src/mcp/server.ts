@@ -14,6 +14,8 @@ import { handleOutline } from "./tools/outline.js";
 import { handlePath } from "./tools/path.js";
 import { handleExplain } from "./tools/explain.js";
 import { handleStatus } from "./tools/status.js";
+import { handleCommunity } from "./tools/community.js";
+import { handleHotspots } from "./tools/hotspots.js";
 import { log } from "../shared/utils.js";
 
 export interface McpServerOptions {
@@ -43,11 +45,13 @@ export async function startMcpServer(options: McpServerOptions = {}): Promise<vo
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      { name: "graph_search", description: "BM25 full-text search on knowledge graph nodes.", inputSchema: { type: "object" as const, properties: { query: { type: "string", description: "Search text" }, top_k: { type: "number", description: "Max results (default: 10)" }, repo: { type: "string", description: "Filter by repo" }, type: { type: "string", description: "Filter by type: function, class, module, all" } }, required: ["query"] } },
+      { name: "graph_search", description: "Full-text search on knowledge graph nodes with optional BFS/DFS context expansion.", inputSchema: { type: "object" as const, properties: { query: { type: "string", description: "Search text" }, top_k: { type: "number", description: "Max results (default: 10)" }, repo: { type: "string", description: "Filter by repo" }, type: { type: "string", description: "Filter by type: function, class, module, all" }, context_depth: { type: "number", description: "BFS/DFS expansion depth from results (0 = no expansion, default: 0)" }, context_mode: { type: "string", description: "Expansion mode: bfs (broad context) or dfs (trace path). Default: bfs" } }, required: ["query"] } },
       { name: "graph_impact", description: "Blast radius analysis: what depends on a symbol and what it depends on.", inputSchema: { type: "object" as const, properties: { symbol: { type: "string", description: "Symbol name" }, direction: { type: "string", description: "upstream, downstream, or both" }, max_depth: { type: "number", description: "Max BFS depth (default: 3)" }, include_tests: { type: "boolean", description: "Include tests (default: false)" } }, required: ["symbol"] } },
       { name: "graph_outline", description: "Compressed file outline: signatures, decorators, docstrings.", inputSchema: { type: "object" as const, properties: { file_path: { type: "string", description: "Relative file path" }, format: { type: "string", description: "markdown or json" } }, required: ["file_path"] } },
       { name: "graph_path", description: "Shortest path between two nodes in the knowledge graph.", inputSchema: { type: "object" as const, properties: { from: { type: "string", description: "Source node" }, to: { type: "string", description: "Target node" }, max_depth: { type: "number", description: "Max depth (default: 10)" }, edge_types: { type: "array", items: { type: "string" }, description: "Edge types to traverse" } }, required: ["from", "to"] } },
       { name: "graph_explain", description: "Complete detail of a node: properties, relationships, centrality.", inputSchema: { type: "object" as const, properties: { symbol: { type: "string", description: "Node name or ID" }, include_code: { type: "boolean", description: "Include file outline" } }, required: ["symbol"] } },
+      { name: "graph_community", description: "List all nodes belonging to a specific community.", inputSchema: { type: "object" as const, properties: { community_id: { type: "string", description: "Community ID or name" } }, required: ["community_id"] } },
+      { name: "graph_hotspots", description: "Most connected nodes in the graph (god nodes / architectural hotspots).", inputSchema: { type: "object" as const, properties: { top_n: { type: "number", description: "Number of results (default: 10)" }, metric: { type: "string", description: "Ranking metric: degree, in_degree, out_degree, betweenness (default: degree)" } } } },
       { name: "graph_status", description: "Graph status: metadata, counts, repos.", inputSchema: { type: "object" as const, properties: {} } },
     ],
   }));
@@ -61,6 +65,8 @@ export async function startMcpServer(options: McpServerOptions = {}): Promise<vo
         case "graph_outline": return handleOutline(db, graphDir, args as Record<string, unknown>);
         case "graph_path": return handlePath(db, args as Record<string, unknown>);
         case "graph_explain": return handleExplain(db, graphDir, args as Record<string, unknown>);
+        case "graph_community": return handleCommunity(db, args as Record<string, unknown>);
+        case "graph_hotspots": return handleHotspots(db, args as Record<string, unknown>);
         case "graph_status": return handleStatus(db, graphDir, graphJsonPath);
         default: return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
       }

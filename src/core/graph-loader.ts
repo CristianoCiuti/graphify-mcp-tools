@@ -17,17 +17,24 @@ export function loadGraphData(graphJsonPath: string): GraphData {
   // Parse nodes — map graphify fields to our schema
   const rawNodes = (data.nodes ?? []) as Array<Record<string, unknown>>;
   const nodes: GraphNode[] = rawNodes.map((n) => {
-    // source_location: "L4" → start_line 4, or "L4-L20" → start 4, end 20
-    let startLine: number | undefined;
-    let endLine: number | undefined;
-    const loc = n.source_location as string | undefined;
-    if (loc) {
-      const match = loc.match(/L(\d+)(?:-L(\d+))?/);
-      if (match) {
-        startLine = parseInt(match[1]!, 10);
-        endLine = match[2] ? parseInt(match[2], 10) : undefined;
+    // start_line / end_line: use explicit values or parse from source_location ("L4" or "L4-L20")
+    let startLine = n.start_line as number | undefined;
+    let endLine = n.end_line as number | undefined;
+    if (!startLine) {
+      const loc = n.source_location as string | undefined;
+      if (loc) {
+        const match = loc.match(/L(\d+)(?:-L(\d+))?/);
+        if (match) {
+          startLine = parseInt(match[1]!, 10);
+          endLine = match[2] ? parseInt(match[2], 10) : undefined;
+        }
       }
     }
+
+    // properties: use nested object if present, otherwise raw node as bag of properties
+    const props = (typeof n.properties === "object" && n.properties !== null)
+      ? n.properties as Record<string, unknown>
+      : n;
 
     return {
       id: n.id as string,
@@ -38,7 +45,7 @@ export function loadGraphData(graphJsonPath: string): GraphData {
       community: n.community != null ? String(n.community) : undefined,
       start_line: startLine,
       end_line: endLine,
-      properties: n,
+      properties: props,
     };
   });
 
