@@ -42,26 +42,32 @@ jobs:
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           echo "current=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
 
-          # Check if a release with this version tag already exists
-          TAG_EXISTS=$(gh release view "v${CURRENT_VERSION}" --json tagName 2>/dev/null && echo "yes" || echo "no")
+          # Check if version already exists on npm OR as a GitHub release
+          NPM_EXISTS=$(npm view "graphify-mcp-tools@${CURRENT_VERSION}" version 2>/dev/null && echo "yes" || echo "no")
+          GH_EXISTS=$(gh release view "v${CURRENT_VERSION}" --json tagName >/dev/null 2>&1 && echo "yes" || echo "no")
 
-          if [ "$TAG_EXISTS" = "yes" ]; then
+          if [ "$NPM_EXISTS" = "yes" ] || [ "$GH_EXISTS" = "yes" ]; then
+            echo "Version ${CURRENT_VERSION} already published. Bumping patch..."
+
             # Bump patch version
             IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
             NEW_PATCH=$((PATCH + 1))
             NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
 
             # Keep bumping until we find an unused version
-            while gh release view "v${NEW_VERSION}" --json tagName 2>/dev/null; do
+            while npm view "graphify-mcp-tools@${NEW_VERSION}" version >/dev/null 2>&1 || \
+                  gh release view "v${NEW_VERSION}" --json tagName >/dev/null 2>&1; do
               NEW_PATCH=$((NEW_PATCH + 1))
               NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
             done
 
             echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
             echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "New version: $NEW_VERSION"
           else
             echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
             echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "Using current version: $CURRENT_VERSION"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
