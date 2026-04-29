@@ -2,17 +2,35 @@
 
 MCP server companion for [Graphify](https://github.com/safishamsi/graphify): exposes knowledge graphs as searchable, queryable tools for AI agents.
 
-Graphify already ships its own MCP server (`python -m graphify.serve`), but this Node.js alternative requires no Python at runtime and adds blast-radius analysis, tree-sitter outlines, and weighted shortest-path queries.
+## Why This Project?
+
+Graphify already ships its own MCP server (`python -m graphify.serve`), but it has limitations:
+
+| | Graphify MCP (built-in) | graphify-mcp-tools |
+|---|---|---|
+| **Runtime** | Requires Python + graphify installed | Node.js only (no Python needed at runtime) |
+| **Search** | Keyword matching (split + score) | Indexed text search with type/repo filters |
+| **Impact analysis** | Not available | BFS blast radius (upstream + downstream) |
+| **Context expansion** | BFS/DFS from keywords | BFS/DFS from ranked search results |
+| **Shortest path** | Unweighted `nx.shortest_path` | Weighted Dijkstra with edge-type filters |
+| **Code outlines** | Not available | Tree-sitter signatures, decorators, docstrings |
+| **Hotspots / God nodes** | Separate tool, degree only | Degree, in/out degree, betweenness centrality |
+| **Community exploration** | Basic listing | Full community membership with degree ranking |
+| **Multi-repo** | Manual merge | Automated build + merge + index pipeline |
+
+In short: graphify-mcp-tools is a **drop-in replacement** that adds richer queries, requires no Python at query time, and integrates with any MCP-compatible editor out of the box.
 
 ```
 Graphify (Python)                    graphify-mcp-tools (Node.js)
 ┌──────────────────┐                ┌───────────────────────────────────┐
 │ tree-sitter AST  │                │ MCP Server (stdio)                │
-│ semantic extract │  graph.json    │ ├─ graph_search (text search)     │
-│ community detect │ ────────────►  │ ├─ graph_impact (BFS blast radius)│
-│ merge-graphs     │                │ ├─ graph_outline (tree-sitter)    │
-│ HTML/report/wiki │                │ ├─ graph_path (Dijkstra)          │
-└──────────────────┘                │ ├─ graph_explain (node detail)    │
+│ semantic extract │  graph.json    │ ├─ graph_search (+BFS/DFS expand) │
+│ community detect │ ────────────►  │ ├─ graph_impact (blast radius)    │
+│ merge-graphs     │                │ ├─ graph_path (weighted Dijkstra) │
+│ HTML/report/wiki │                │ ├─ graph_explain (node detail)    │
+└──────────────────┘                │ ├─ graph_community (membership)   │
+                                    │ ├─ graph_hotspots (god nodes)     │
+                                    │ ├─ graph_outline (tree-sitter)    │
                                     │ └─ graph_status                   │
                                     └───────────────────────────────────┘
 ```
@@ -29,45 +47,47 @@ Requires Node.js >= 18.
 
 ## Quick Start
 
-1. **Generate a graph** with [Graphify](https://github.com/safishamsi/graphify) (inside your AI assistant):
+1. **Generate a graph** with [Graphify](https://github.com/safishamsi/graphify):
+
+   From an AI assistant (Claude Code, OpenCode, Cursor, etc.):
    ```
    /graphify .
    ```
-   Or from CLI:
+
+   Or install graphify and use the build command:
    ```bash
    pip install graphifyy
-   graphify ./my-project
+   graphify-mcp-tools build --config graphify-tools.config.yml
    ```
 
-2. **Start the MCP server**:
+2. **Configure your editor**:
    ```bash
-   graphify-mcp-tools mcp --graph ./graphify-out
+   graphify-mcp-tools install --target opencode   # or: cursor, claude, vscode
    ```
 
-3. **Configure your editor** (auto-detects OpenCode, Cursor, Claude Code):
-   ```bash
-   graphify-mcp-tools setup
-   ```
+   This registers the MCP server, installs a hook, and writes a skill file — all in one step.
+
+3. The MCP server starts automatically with your editor. Use the graph tools directly from the AI assistant.
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
 | `graph_search` | Text search across nodes with optional BFS/DFS context expansion |
-| `graph_impact` | BFS blast radius — find all downstream dependents of a symbol |
-| `graph_outline` | Tree-sitter code outline for any file (functions, classes, imports) |
-| `graph_path` | Dijkstra shortest path between two symbols |
+| `graph_impact` | BFS blast radius — find all upstream/downstream dependents of a symbol |
+| `graph_path` | Weighted shortest path (Dijkstra) between two symbols |
 | `graph_explain` | Full detail on a node: edges, community, centrality metrics |
 | `graph_community` | List all nodes belonging to a specific community |
 | `graph_hotspots` | Most connected nodes (god nodes / architectural bottlenecks) |
+| `graph_outline` | Tree-sitter code outline for any file (functions, classes, imports) |
 | `graph_status` | Graph metadata: node/edge counts, repos, build timestamp |
 
 ## CLI Commands
 
 ```bash
-graphify-mcp-tools install   # Install MCP server config for your editor
+graphify-mcp-tools install   # Install MCP server + hooks + skill for your editor
 graphify-mcp-tools mcp       # Start MCP server (stdio transport)
-graphify-mcp-tools build     # Orchestrate multi-repo graphify build + merge
+graphify-mcp-tools build     # Build graph from configured repos (requires graphify)
 graphify-mcp-tools index     # Generate search index from graph.json
 graphify-mcp-tools outline   # Pre-compute outlines for configured patterns
 graphify-mcp-tools check     # Verify graphify installation and graph status
@@ -82,6 +102,9 @@ graphify-mcp-tools check     # Verify graphify installation and graph status
 # build:
 --config  Path to graphify-tools.config.yml
 --force   Force full rebuild (skip incremental update)
+
+# install:
+--target  Editor to configure: opencode, cursor, claude, vscode
 ```
 
 ## Editor Configuration
@@ -95,7 +118,7 @@ graphify-mcp-tools install --target claude
 graphify-mcp-tools install --target vscode
 ```
 
-The `install` command does two things for each target:
+The `install` command does three things for each target:
 
 1. **Registers the MCP server** — so the editor can call graph tools
 2. **Installs a hook/rule** — reminds the AI agent to use graph tools instead of manual file searches
@@ -139,7 +162,7 @@ MCP server (`.cursor/mcp.json`):
 }
 ```
 
-Rule (`.cursor/rules/graphify-mcp-tools.mdc`) — always-active rule that instructs the agent to prefer `graph_search`, `graph_impact`, `graph_path` over manual grep/find.
+Rule (`.cursor/rules/graphify-mcp-tools.mdc`) — always-active rule with full tool documentation.
 
 ### VS Code
 
@@ -156,7 +179,7 @@ MCP server (`.vscode/mcp.json`):
 }
 ```
 
-Copilot instructions (`.github/copilot-instructions.md`) — appends a section guiding Copilot to use the MCP graph tools for codebase queries.
+Copilot instructions (`.github/copilot-instructions.md`) — appends a section guiding Copilot to use the MCP graph tools.
 
 ### Claude Code
 
@@ -164,54 +187,76 @@ Copilot instructions (`.github/copilot-instructions.md`) — appends a section g
 claude mcp add graphify -- npx -y graphify-mcp-tools mcp --graph ./graphify-out
 ```
 
-Hook (`.claude/settings.json`) — a `PreToolUse` hook that fires before bash commands involving grep/find/rg, injecting a reminder that graph tools are available.
+Hook (`.claude/settings.json`) — a `PreToolUse` hook that fires before bash commands, injecting a reminder that graph tools are available.
 
 ## Configuration
 
-Create `graphify-tools.config.yml` in your project root:
+Create `graphify-tools.config.yml` in your project root for multi-repo builds:
 
 ```yaml
-graph_dir: ./graphify-out
-repos:
-  - path: ./services/api
-    name: api-service
-  - path: ./services/core
-    name: core-lib
+output: graphify-out
 
-outline:
-  patterns:
+repos:
+  - name: api-service
+    path: ./services/api
+  - name: core-lib
+    path: ./services/core
+
+build:
+  graphify_args: []
+
+outlines:
+  enabled: true
+  language: python
+  paths:
     - "src/**/*.py"
     - "src/**/*.ts"
+  exclude:
+    - "**/__pycache__/**"
+    - "**/test_*.py"
 ```
 
 ## Multi-Repo Build
 
-Orchestrate Graphify across multiple repositories and merge results:
+Orchestrate graph builds across multiple repositories and merge results:
 
 ```bash
 graphify-mcp-tools build --config graphify-tools.config.yml
 ```
 
-This runs `graphify <path>` on each configured repo, then uses `graphify merge-graphs` to combine the individual graphs into a unified knowledge graph.
+The build pipeline:
+1. For each repo: runs graphify's Python API (`detect` → `extract` → `build` → `cluster` → `to_json`) for initial builds, or `graphify update <path>` for incremental rebuilds
+2. Merges individual graphs via `graphify merge-graphs`
+3. Normalizes file paths across repos
+4. Generates the search index (`graph_search.db`)
+
+Requires graphify installed (`pip install graphifyy`). The MCP server itself does NOT require Python — only the `build` command does.
 
 ## Programmatic API
 
 ```typescript
 import {
   openDatabase,
+  initializeSchema,
+  populateDatabase,
+  loadGraphData,
   searchNodes,
-  computeImpact,
+  analyzeImpact,
   findShortestPath,
   getNodeDetail,
 } from "graphify-mcp-tools";
 
-const db = await openDatabase("./graphify-out/graph.json");
+// Load graph and create in-memory database
+const graphData = loadGraphData("./graphify-out/graph.json");
+const db = await openDatabase(":memory:");
+initializeSchema(db);
+populateDatabase(db, graphData);
 
 // Search
 const results = searchNodes(db, "authentication", { top_k: 5, type: "function" });
 
 // Impact analysis
-const impact = computeImpact(db, "Function:authenticate_user", { max_depth: 3 });
+const impact = analyzeImpact(db, "Function:authenticate_user", { max_depth: 3 });
 
 // Shortest path
 const path = findShortestPath(db, "Module:auth", "Module:api");
@@ -223,9 +268,9 @@ const detail = getNodeDetail(db, "Class:UserService");
 ## How It Works
 
 1. **Loads** Graphify's `graph.json` into an in-memory SQLite database (via sql.js WASM)
-2. **Indexes** nodes with label/type/repo fields for fast text search
+2. **Indexes** nodes with label/type/repo/community fields for fast text search
 3. **Serves** queries over MCP stdio protocol — compatible with any MCP client
-4. **Computes** graph algorithms (BFS, Dijkstra) on-demand from the edge table
+4. **Computes** graph algorithms (BFS, DFS, Dijkstra) on-demand from the edge table
 5. **Outlines** source files using tree-sitter WASM parsers (with regex fallback)
 
 ## License
