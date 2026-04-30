@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import type { Config } from "../shared/types.js";
 import { checkGraphify } from "./graphify-check.js";
 import { runIndexer } from "./indexer.js";
+import { runOutlineGeneration } from "./outlines.js";
 import { postProcess } from "./post-process.js";
 import { log } from "../shared/utils.js";
 
@@ -191,6 +192,13 @@ export async function runBuild(config: Config, configDir: string, options: Build
 
     // 6. Generate search index
     await runIndexer(mergedPath, outputDir);
+
+    // 7. Generate outlines (if enabled)
+    if (config.outlines.enabled) {
+      log.info("Generating outlines...");
+      const outlineCount = await runOutlineGeneration(config, configDir, outputDir, { force: options.force });
+      log.info(`  ✓ ${outlineCount} outlines generated`);
+    }
 
     log.info("");
     log.info("Build complete!");
