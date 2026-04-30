@@ -14,6 +14,7 @@ const BuildConfigSchema = z.object({
   graphify_args: z.array(z.string()).default([]),
   html: z.boolean().default(true),
   html_min_degree: z.number().int().min(1).optional(),
+  html_community_fallback: z.boolean().default(true),
   exclude: z.array(z.string()).default([]),
   mode: z.enum(["monorepo", "separate"]).default("monorepo"),
 });

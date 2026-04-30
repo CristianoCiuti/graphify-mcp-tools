@@ -388,12 +388,20 @@ function runPostBuildAnalysis(mergedPath: string, outputDir: string, config: Con
   const pyOutputDir = outputDir.replace(/\\/g, "/");
   const htmlEnabled = config.build.html;
   const htmlMinDegree = config.build.html_min_degree;
+  const htmlCommunityFallback = config.build.html_community_fallback;
 
   let htmlBlock = "";
-  if (htmlEnabled && htmlMinDegree != null) {
-    htmlBlock = `
-# HTML visualization (filtered by degree >= ${htmlMinDegree})
+  if (htmlEnabled) {
+    // Build the HTML generation block with fallback logic
+    const NODE_LIMIT = 5000;
+    let vizCode: string;
+
+    if (htmlMinDegree != null) {
+      // Filter by degree first, then check limit
+      vizCode = `
+# HTML visualization
 from graphify.export import to_html
+from collections import Counter
 
 threshold = ${htmlMinDegree}
 subgraph_nodes = [n for n in G.nodes() if G.degree(n) >= threshold]
@@ -404,16 +412,70 @@ for cid, members in communities.items():
     filtered = [m for m in members if m in node_set]
     if filtered:
         sub_communities[cid] = filtered
-to_html(H, sub_communities, str(out / "graph.html"))
-print(f"  graph.html written ({H.number_of_nodes()} nodes, degree >= {threshold})")
+
+if H.number_of_nodes() <= ${NODE_LIMIT}:
+    to_html(H, sub_communities, str(out / "graph.html"), community_labels=labels or None)
+    print(f"  graph.html written ({H.number_of_nodes()} nodes, degree >= {threshold})")
+elif ${htmlCommunityFallback ? "True" : "False"}:
+    # Aggregated community view
+    node_to_community = {nid: cid for cid, members in sub_communities.items() for nid in members}
+    import networkx as nx_meta
+    meta = nx_meta.Graph()
+    for cid, members in sub_communities.items():
+        meta.add_node(str(cid), label=labels.get(cid, f"Community {cid}"))
+    edge_counts = Counter()
+    for u, v in H.edges():
+        cu, cv = node_to_community.get(u), node_to_community.get(v)
+        if cu is not None and cv is not None and cu != cv:
+            edge_counts[(min(cu, cv), max(cu, cv))] += 1
+    for (cu, cv), w in edge_counts.items():
+        meta.add_edge(str(cu), str(cv), weight=w, relation=f"{w} cross-community edges", confidence="AGGREGATED")
+    if meta.number_of_nodes() > 1:
+        meta_communities = {cid: [str(cid)] for cid in sub_communities}
+        member_counts = {cid: len(members) for cid, members in sub_communities.items()}
+        to_html(meta, meta_communities, str(out / "graph.html"), community_labels=labels or None, member_counts=member_counts)
+        print(f"  graph.html written (aggregated: {meta.number_of_nodes()} community nodes)")
+    else:
+        print("  graph.html skipped (single community after filtering)")
+else:
+    print(f"  graph.html skipped ({H.number_of_nodes()} nodes exceeds limit)")
 `;
-  } else if (htmlEnabled) {
-    htmlBlock = `
-# HTML visualization (full graph)
+    } else {
+      // No degree filter
+      vizCode = `
+# HTML visualization
 from graphify.export import to_html
-to_html(G, communities, str(out / "graph.html"))
-print(f"  graph.html written ({G.number_of_nodes()} nodes)")
+from collections import Counter
+
+if G.number_of_nodes() <= ${NODE_LIMIT}:
+    to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+    print(f"  graph.html written ({G.number_of_nodes()} nodes)")
+elif ${htmlCommunityFallback ? "True" : "False"}:
+    # Aggregated community view: each node = 1 community
+    node_to_community = {nid: cid for cid, members in communities.items() for nid in members}
+    import networkx as nx_meta
+    meta = nx_meta.Graph()
+    for cid, members in communities.items():
+        meta.add_node(str(cid), label=labels.get(cid, f"Community {cid}"))
+    edge_counts = Counter()
+    for u, v in G.edges():
+        cu, cv = node_to_community.get(u), node_to_community.get(v)
+        if cu is not None and cv is not None and cu != cv:
+            edge_counts[(min(cu, cv), max(cu, cv))] += 1
+    for (cu, cv), w in edge_counts.items():
+        meta.add_edge(str(cu), str(cv), weight=w, relation=f"{w} cross-community edges", confidence="AGGREGATED")
+    if meta.number_of_nodes() > 1:
+        meta_communities = {cid: [str(cid)] for cid in communities}
+        member_counts = {cid: len(members) for cid, members in communities.items()}
+        to_html(meta, meta_communities, str(out / "graph.html"), community_labels=labels or None, member_counts=member_counts)
+        print(f"  graph.html written (aggregated: {meta.number_of_nodes()} community nodes)")
+    else:
+        print("  graph.html skipped (single community)")
+else:
+    print(f"  graph.html skipped ({G.number_of_nodes()} nodes exceeds limit)")
 `;
+    }
+    htmlBlock = vizCode;
   }
 
   const script = `

@@ -22,11 +22,12 @@ repos:
 
 # Build options
 build:
-  mode: monorepo             # "monorepo" (default) or "separate"
-  graphify_args: []
-  exclude: []                # directory names to skip during detect (e.g. dist_package, .tox)
-  html: true                 # generate graph.html visualization
-  # html_min_degree: 3       # if set, only include nodes with degree >= this value in HTML
+  mode: monorepo                  # "monorepo" (default) or "separate"
+  graphify_args: []               # extra CLI arguments passed to graphify
+  exclude: []                     # directory names to skip during detect (e.g. dist_package, .tox)
+  html: true                      # generate graph.html visualization
+  html_community_fallback: true   # if graph > 5000 nodes, generate aggregated community-level HTML
+  # html_min_degree: 3            # if set, only include nodes with degree >= this value in HTML
 
 # Outline generation options
 outlines:

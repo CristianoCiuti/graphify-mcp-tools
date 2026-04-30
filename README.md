@@ -129,7 +129,7 @@ The build pipeline:
 3. In **separate** mode: builds each repo independently, then merges via `graphify merge-graphs`
 4. Normalizes file paths, tags nodes with repo names
 5. Generates `GRAPH_REPORT.md` (architecture overview, god nodes, communities)
-6. Generates `graph.html` interactive visualization (if `html: true`)
+6. Generates `graph.html` interactive visualization (if `html: true`; falls back to aggregated community view for large graphs)
 7. Generates the search index (`graph_search.db`)
 8. Generates code outlines (if `outlines.enabled: true`)
 
@@ -195,32 +195,33 @@ repos:
 
 # Build options
 build:
-  mode: monorepo             # "monorepo" (default) or "separate"
-                             #   monorepo: symlinks all repos into one workspace,
-                             #     single graphify build — resolves cross-repo imports
-                             #   separate: builds each repo independently, then merges
-                             #     with graphify merge-graphs (no cross-repo edges)
-  exclude:                   # directory names to skip during file detection
-    - "dist_package"         #   these are added to graphify's _SKIP_DIRS set
-    - ".tox"                 #   (in addition to built-in: venv/, node_modules/, etc.)
-  graphify_args: []          # extra CLI arguments passed to graphify (merge-graphs, update)
-  html: true                 # generate graph.html interactive visualization after build
-  # html_min_degree: 3       # if set, only nodes with degree >= this value are included
-                             #   in the HTML visualization (omit for full graph)
+  mode: monorepo                  # "monorepo" (default) or "separate"
+                                  #   monorepo: symlinks all repos into one workspace,
+                                  #     single graphify build — resolves cross-repo imports
+                                  #   separate: builds each repo independently, then merges
+                                  #     with graphify merge-graphs (no cross-repo edges)
+  exclude:                        # directory names to skip during file detection
+    - "dist_package"              #   these are added to graphify's _SKIP_DIRS set
+    - ".tox"                      #   (in addition to built-in: venv/, node_modules/, etc.)
+  graphify_args: []               # extra CLI arguments passed to graphify (merge-graphs, update)
+  html: true                      # generate graph.html interactive visualization after build
+  html_community_fallback: true   # if graph > 5000 nodes, generate aggregated community-level HTML
+  # html_min_degree: 3            # if set, only nodes with degree >= this value are included
+                                  #   in the HTML visualization (omit for full graph)
 
 # Outline generation options
 outlines:
-  enabled: true              # generate tree-sitter code outlines during build
-  language: python           # target language for tree-sitter parsing
-  paths:                     # glob patterns for files to outline (relative to repo root)
+  enabled: true                   # generate tree-sitter code outlines during build
+  language: python                # target language for tree-sitter parsing
+  paths:                          # glob patterns for files to outline (relative to repo root)
     - "src/**/*.py"
-  exclude:                   # glob patterns to skip
+  exclude:                        # glob patterns to skip
     - "**/__pycache__/**"
     - "**/test_*.py"
     - "**/.git/**"
 
 # MCP server options
-server: {}                   # reserved for future configuration
+server: {}                        # reserved for future configuration
 ```
 
 ## Programmatic API
