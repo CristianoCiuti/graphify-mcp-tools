@@ -82,6 +82,7 @@ export interface BuildConfig {
   html: boolean;
   html_min_degree?: number;
   exclude: string[];
+  mode: "monorepo" | "separate";
 }
 
 export interface OutlineConfig {
@@ -234,6 +235,7 @@ export const DEFAULT_CONFIG: Config = {
     graphify_args: [],
     html: true,
     exclude: [],
+    mode: "monorepo",
   },
   outlines: {
     enabled: true,

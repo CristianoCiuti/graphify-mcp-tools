@@ -15,6 +15,7 @@ const BuildConfigSchema = z.object({
   html: z.boolean().default(true),
   html_min_degree: z.number().int().min(1).optional(),
   exclude: z.array(z.string()).default([]),
+  mode: z.enum(["monorepo", "separate"]).default("monorepo"),
 });
 
 const OutlineConfigSchema = z.object({

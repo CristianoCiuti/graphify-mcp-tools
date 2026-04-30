@@ -1,8 +1,9 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, copyFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, copyFileSync, writeFileSync, symlinkSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Config } from "../shared/types.js";
+import { readFileSync } from "node:fs";
+import type { Config, GraphData } from "../shared/types.js";
 import { checkGraphify } from "./graphify-check.js";
 import { runIndexer } from "./indexer.js";
 import { runOutlineGeneration } from "./outlines.js";
@@ -16,22 +17,22 @@ export interface BuildOptions {
   force: boolean;
 }
 
+interface GraphifyInfo {
+  version: string;
+  command: string;
+}
+
 /**
  * Python script template for initial graph build via graphify library API.
  * Uses: detect → extract → build_from_json → cluster → to_json
- * This is AST-only (deterministic, no LLM cost).
  *
  * Key design decisions:
  * - Uses detect() instead of collect_files() because detect() applies
  *   _SKIP_DIRS filtering (venv/, node_modules/, site-packages/, etc.)
- *   while collect_files() does not, causing RecursionError on repos
- *   with virtualenvs containing deeply-nested C files.
  * - Uses forward slashes for paths (Python's Path handles both on Windows).
  * - Monkey-patches _SKIP_DIRS with user-configured exclusions before detect().
  */
 function buildPythonScript(repoPath: string, outPath: string, excludeDirs: string[]): string {
-  // Use forward slashes — Python Path handles them correctly on all platforms.
-  // Backslash escaping through shell layers is error-prone on Windows.
   const pyRepoPath = repoPath.replace(/\\/g, "/");
   const pyOutPath = outPath.replace(/\\/g, "/");
 
@@ -57,7 +58,6 @@ path = Path("${pyRepoPath}")
 out = Path("${pyOutPath}")
 out.mkdir(parents=True, exist_ok=True)
 
-# Use detect() for proper filtering (skips venv/, node_modules/, site-packages/, etc.)
 result = detect(path)
 code_files = [Path(f) for f in result.get("files", {}).get("code", [])]
 
@@ -75,12 +75,7 @@ print(f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(communiti
 }
 
 /**
- * Run the full build pipeline:
- * 1. Verify graphify installed (PyPI: graphifyy)
- * 2. For each repo: run Python API build (or `graphify update` for incremental)
- * 3. Merge graphs via `graphify merge-graphs`
- * 4. Post-process paths
- * 5. Generate search index
+ * Run the full build pipeline.
  */
 export async function runBuild(config: Config, configDir: string, options: BuildOptions): Promise<void> {
   // 1. Verify graphify
@@ -98,10 +93,9 @@ export async function runBuild(config: Config, configDir: string, options: Build
     process.exit(1);
   }
 
-  // Create output directory
+  // Create output directory (with --force cleanup)
   const outputDir = resolve(configDir, config.output);
 
-  // --force: clean output directory and per-repo graphify caches
   if (options.force) {
     if (existsSync(outputDir)) {
       rmSync(outputDir, { recursive: true, force: true });
@@ -120,96 +114,32 @@ export async function runBuild(config: Config, configDir: string, options: Build
     mkdirSync(outputDir, { recursive: true });
   }
 
-  // Create temp directory for individual repo graphs
   const tmpDir = join(tmpdir(), `graphify-build-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
 
   try {
-    // 2. Build each repo
-    const repoGraphs: string[] = [];
-    for (const repo of config.repos) {
-      const repoPath = resolve(configDir, repo.path);
-      if (!existsSync(repoPath)) {
-        log.warn(`Repo not found, skipping: ${repoPath}`);
-        continue;
-      }
-
-      const repoOutDir = join(tmpDir, repo.name);
-      mkdirSync(repoOutDir, { recursive: true });
-
-      log.info(`Building graph for ${repo.name}...`);
-
-      // Check if repo has existing graph (use `graphify update` for incremental)
-      const existingGraph = join(repoPath, "graphify-out", "graph.json");
-      const useUpdate = !options.force && existsSync(existingGraph);
-
-      try {
-        if (useUpdate) {
-          // Incremental: use `graphify update <path>` (re-extracts code, no LLM)
-          const updateCmd = `${graphifyInfo.command} update "${repoPath}"`;
-          log.debug(`  Incremental: ${updateCmd}`);
-          execSync(updateCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 600_000, env: PYTHON_ENV });
-          // Copy the updated graph to our temp dir
-          copyFileSync(existingGraph, join(repoOutDir, "graph.json"));
-        } else {
-          // Initial build: write Python script to temp file and execute.
-          // This avoids quoting/escaping issues with `python -c "..."` on Windows.
-          const script = buildPythonScript(repoPath, repoOutDir, config.build.exclude);
-          const scriptPath = join(tmpDir, `${repo.name}_build.py`);
-          writeFileSync(scriptPath, script);
-          log.debug(`  Initial build via Python API (${scriptPath})`);
-          const output = execSync(`python "${scriptPath}"`, {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: 600_000,
-            cwd: repoPath,
-            env: PYTHON_ENV,
-          });
-          if (output.trim()) log.info(`  ${output.trim()}`);
-        }
-
-        const graphJson = join(repoOutDir, "graph.json");
-        if (existsSync(graphJson)) {
-          repoGraphs.push(graphJson);
-          log.info(`  \u2713 ${repo.name}`);
-        } else {
-          log.error(`  \u2717 ${repo.name}: graph.json not produced`);
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.error(`  \u2717 ${repo.name}: ${msg}`);
-      }
-    }
-
-    if (repoGraphs.length === 0) {
-      log.error("No graphs were generated. Check repo paths and graphify installation.");
-      process.exit(1);
-    }
-
-    // 3. Merge graphs via `graphify merge-graphs`
+    // 2. Build graph
     const mergedPath = join(outputDir, "graph.json");
-    if (repoGraphs.length > 1) {
-      const filesArg = repoGraphs.map((f) => `"${f}"`).join(" ");
-      const mergeCmd = `${graphifyInfo.command} merge-graphs ${filesArg} --out "${mergedPath}"`;
-      log.info("Merging graphs...");
-      execSync(mergeCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], env: PYTHON_ENV });
-    } else {
-      // Single repo - just copy
-      copyFileSync(repoGraphs[0]!, mergedPath);
-    }
-    log.info(`\u2713 Merged graph: ${mergedPath}`);
+    const mode = config.build.mode;
+    log.info(`Build mode: ${mode}`);
 
-    // 4. Post-process
+    if (mode === "monorepo") {
+      await buildMonorepo(config, configDir, options, graphifyInfo, tmpDir, mergedPath);
+    } else {
+      await buildSeparate(config, configDir, options, graphifyInfo, tmpDir, outputDir, mergedPath);
+    }
+
+    // 3. Post-process paths
     const basePaths = config.repos.map((r) => resolve(configDir, r.path));
     postProcess(mergedPath, basePaths);
 
-    // 5. Post-build analysis (report + HTML visualization)
+    // 4. Post-build analysis (report + HTML visualization)
     runPostBuildAnalysis(mergedPath, outputDir, config, tmpDir);
 
-    // 6. Generate search index
+    // 5. Generate search index
     await runIndexer(mergedPath, outputDir);
 
-    // 7. Generate outlines (if enabled)
+    // 6. Generate outlines (if enabled)
     if (config.outlines.enabled) {
       log.info("Generating outlines...");
       const outlineCount = await runOutlineGeneration(config, configDir, outputDir, { force: options.force });
@@ -221,7 +151,6 @@ export async function runBuild(config: Config, configDir: string, options: Build
     log.info(`  Output: ${outputDir}`);
     log.info(`  Repos: ${config.repos.length}`);
   } finally {
-    // Cleanup temp directory
     try {
       rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -230,14 +159,218 @@ export async function runBuild(config: Config, configDir: string, options: Build
   }
 }
 
+// ─── Monorepo mode ───────────────────────────────────────────────────────────
+
 /**
- * Post-build analysis: generate GRAPH_REPORT.md and optionally graph.html.
+ * Monorepo build: symlink all repos into a single temp workspace, run ONE
+ * graphify build so cross-repo imports are resolved in a single extraction batch.
  *
- * Writes a Python script that:
- * 1. Loads graph.json into networkx
- * 2. Runs cluster + score_all + god_nodes + surprising_connections + suggest_questions
- * 3. Generates GRAPH_REPORT.md via report.generate()
- * 4. If html enabled: generates graph.html via to_html() (filtered for large graphs)
+ * 1. Create tmp workspace with symlinks/junctions for each repo
+ * 2. Run `graphify update <workspace>` (or full Python API build)
+ * 3. Copy graph.json to output, tag nodes with repo name
+ */
+async function buildMonorepo(
+  config: Config,
+  configDir: string,
+  options: BuildOptions,
+  graphifyInfo: GraphifyInfo,
+  tmpDir: string,
+  mergedPath: string,
+): Promise<void> {
+  const workspace = join(tmpDir, "workspace");
+  mkdirSync(workspace, { recursive: true });
+
+  // Symlink each repo into workspace/<repo_name>
+  const repoNames: string[] = [];
+  for (const repo of config.repos) {
+    const repoPath = resolve(configDir, repo.path);
+    if (!existsSync(repoPath)) {
+      log.warn(`Repo not found, skipping: ${repoPath}`);
+      continue;
+    }
+
+    const linkPath = join(workspace, repo.name);
+    try {
+      // Windows: use 'junction' (no admin privileges needed)
+      // Unix: use 'dir' symlink
+      symlinkSync(repoPath, linkPath, "junction");
+      log.info(`  Linked: ${repo.name} → ${repoPath}`);
+      repoNames.push(repo.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`  Symlink failed for ${repo.name}: ${msg}, falling back to copy...`);
+      copyDirRecursive(repoPath, linkPath, config.build.exclude);
+      repoNames.push(repo.name);
+    }
+  }
+
+  if (repoNames.length === 0) {
+    log.error("No repos linked. Check repo paths.");
+    process.exit(1);
+  }
+
+  // Build: single extraction batch over the whole workspace
+  const workspaceGraphOut = join(workspace, "graphify-out");
+  const existingGraph = join(workspaceGraphOut, "graph.json");
+  const useUpdate = !options.force && existsSync(existingGraph);
+
+  log.info(`Building unified graph (${repoNames.length} repos)...`);
+
+  if (useUpdate) {
+    const updateCmd = `${graphifyInfo.command} update "${workspace}"`;
+    log.debug(`  Incremental: ${updateCmd}`);
+    execSync(updateCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 600_000, env: PYTHON_ENV });
+  } else {
+    const script = buildPythonScript(workspace, workspaceGraphOut, config.build.exclude);
+    const scriptPath = join(tmpDir, "monorepo_build.py");
+    writeFileSync(scriptPath, script);
+    log.debug(`  Full build via Python API (${scriptPath})`);
+    const output = execSync(`python "${scriptPath}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 600_000,
+      cwd: workspace,
+      env: PYTHON_ENV,
+    });
+    if (output.trim()) log.info(`  ${output.trim()}`);
+  }
+
+  const builtGraph = join(workspaceGraphOut, "graph.json");
+  if (!existsSync(builtGraph)) {
+    log.error("graph.json not produced by monorepo build.");
+    process.exit(1);
+  }
+
+  // Copy to output and tag nodes with repo name
+  copyFileSync(builtGraph, mergedPath);
+  tagNodesWithRepo(mergedPath, repoNames);
+  log.info(`✓ Unified graph: ${mergedPath}`);
+}
+
+/**
+ * Tag each node's `repo` field based on the first path component of source_file.
+ * e.g. source_file="motore_common/src/foo.py" → repo="motore_common"
+ */
+function tagNodesWithRepo(graphJsonPath: string, repoNames: string[]): void {
+  const raw = readFileSync(graphJsonPath, "utf-8");
+  const data = JSON.parse(raw) as GraphData;
+  const repoSet = new Set(repoNames);
+
+  for (const node of data.nodes) {
+    if (!node.source_file) continue;
+    const normalized = node.source_file.replace(/\\/g, "/");
+    const firstComponent = normalized.split("/")[0];
+    if (firstComponent && repoSet.has(firstComponent)) {
+      node.repo = firstComponent;
+    }
+  }
+
+  writeFileSync(graphJsonPath, JSON.stringify(data, null, 2));
+}
+
+/**
+ * Recursive directory copy with exclusion support.
+ * Fallback for when symlinks/junctions fail.
+ */
+function copyDirRecursive(src: string, dest: string, excludeDirs: string[]): void {
+  const excludeSet = new Set(excludeDirs);
+  mkdirSync(dest, { recursive: true });
+
+  for (const entry of readdirSync(src)) {
+    if (excludeSet.has(entry)) continue;
+    const srcPath = join(src, entry);
+    const destPath = join(dest, entry);
+    const stat = statSync(srcPath);
+    if (stat.isDirectory()) {
+      copyDirRecursive(srcPath, destPath, excludeDirs);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+// ─── Separate mode (original: per-repo build + merge) ───────────────────────
+
+async function buildSeparate(
+  config: Config,
+  configDir: string,
+  options: BuildOptions,
+  graphifyInfo: GraphifyInfo,
+  tmpDir: string,
+  outputDir: string,
+  mergedPath: string,
+): Promise<void> {
+  const repoGraphs: string[] = [];
+  for (const repo of config.repos) {
+    const repoPath = resolve(configDir, repo.path);
+    if (!existsSync(repoPath)) {
+      log.warn(`Repo not found, skipping: ${repoPath}`);
+      continue;
+    }
+
+    const repoOutDir = join(tmpDir, repo.name);
+    mkdirSync(repoOutDir, { recursive: true });
+
+    log.info(`Building graph for ${repo.name}...`);
+
+    const existingGraph = join(repoPath, "graphify-out", "graph.json");
+    const useUpdate = !options.force && existsSync(existingGraph);
+
+    try {
+      if (useUpdate) {
+        const updateCmd = `${graphifyInfo.command} update "${repoPath}"`;
+        log.debug(`  Incremental: ${updateCmd}`);
+        execSync(updateCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 600_000, env: PYTHON_ENV });
+        copyFileSync(existingGraph, join(repoOutDir, "graph.json"));
+      } else {
+        const script = buildPythonScript(repoPath, repoOutDir, config.build.exclude);
+        const scriptPath = join(tmpDir, `${repo.name}_build.py`);
+        writeFileSync(scriptPath, script);
+        log.debug(`  Initial build via Python API (${scriptPath})`);
+        const output = execSync(`python "${scriptPath}"`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: 600_000,
+          cwd: repoPath,
+          env: PYTHON_ENV,
+        });
+        if (output.trim()) log.info(`  ${output.trim()}`);
+      }
+
+      const graphJson = join(repoOutDir, "graph.json");
+      if (existsSync(graphJson)) {
+        repoGraphs.push(graphJson);
+        log.info(`  ✓ ${repo.name}`);
+      } else {
+        log.error(`  ✗ ${repo.name}: graph.json not produced`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`  ✗ ${repo.name}: ${msg}`);
+    }
+  }
+
+  if (repoGraphs.length === 0) {
+    log.error("No graphs were generated. Check repo paths and graphify installation.");
+    process.exit(1);
+  }
+
+  // Merge via `graphify merge-graphs`
+  if (repoGraphs.length > 1) {
+    const filesArg = repoGraphs.map((f) => `"${f}"`).join(" ");
+    const mergeCmd = `${graphifyInfo.command} merge-graphs ${filesArg} --out "${mergedPath}"`;
+    log.info("Merging graphs...");
+    execSync(mergeCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], env: PYTHON_ENV });
+  } else {
+    copyFileSync(repoGraphs[0]!, mergedPath);
+  }
+  log.info(`✓ Merged graph: ${mergedPath}`);
+}
+
+// ─── Post-build analysis ─────────────────────────────────────────────────────
+
+/**
+ * Generate GRAPH_REPORT.md and optionally graph.html.
  */
 function runPostBuildAnalysis(mergedPath: string, outputDir: string, config: Config, tmpDir: string): void {
   const pyMergedPath = mergedPath.replace(/\\/g, "/");
@@ -308,9 +441,6 @@ labels = {cid: f"Community {cid}" for cid in communities}
 questions = suggest_questions(G, communities, labels)
 
 # Generate report (always)
-# generate() signature: (G, communities, cohesion_scores, community_labels,
-#   god_node_list, surprise_list, detection_result, token_cost, root, suggested_questions=None) -> str
-# Build detection_result from graph metadata (required keys: total_files, total_words)
 file_nodes = [n for n, d in G.nodes(data=True) if d.get("type") == "file"]
 detection_result = {"total_files": len(file_nodes), "total_words": G.number_of_nodes() * 50}
 token_cost = {"input": 0, "output": 0}
