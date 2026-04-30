@@ -253,8 +253,8 @@ import sys, json
 from pathlib import Path
 
 try:
-    from graphify.cluster import cluster
-    from graphify.analyze import score_all, god_nodes, surprising_connections, suggest_questions
+    from graphify.cluster import cluster, score_all
+    from graphify.analyze import god_nodes, surprising_connections, suggest_questions
     from graphify.report import generate as generate_report
     from graphify.build import build_from_json
     import networkx as nx

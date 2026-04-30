@@ -1,13 +1,15 @@
 # graphify-tools.config.yml
 # Configuration for graphify-mcp-tools
+# NOTE: All paths are relative to this file's location.
+# When placed in an editor directory (e.g. .opencode/), use ../ to reference project root.
 
-# Output directory (relative to config file location)
-output: graphify-out
+# Output directory
+output: ../graphify-out
 
 # Repositories to include in multi-repo build
 repos:
   - name: my-project
-    path: .
+    path: ..
 
 # Build options
 build:

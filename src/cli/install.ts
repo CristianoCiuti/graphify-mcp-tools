@@ -11,7 +11,7 @@ const DEFAULT_CONFIG_YAML = `# graphify-tools.config.yml
 # Configuration for graphify-mcp-tools
 
 # Output directory (relative to project root)
-output: graphify-out
+output: ../graphify-out
 
 # Repositories to include in multi-repo build
 repos:

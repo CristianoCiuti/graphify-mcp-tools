@@ -195,13 +195,13 @@ Hook (`.claude/settings.json`) — a `PreToolUse` hook that fires before bash co
 The `install` command writes `graphify-tools.config.yml` into the editor directory (e.g. `.opencode/graphify-tools.config.yml`). The config is auto-detected from editor directories, or you can pass `--config` explicitly.
 
 ```yaml
-output: graphify-out
+output: ../graphify-out
 
 repos:
   - name: api-service
-    path: ./services/api
+    path: ../../services/api
   - name: core-lib
-    path: ./services/core
+    path: ../../services/core
 
 build:
   graphify_args: []
@@ -217,7 +217,6 @@ outlines:
   language: python
   paths:
     - "src/**/*.py"
-    - "src/**/*.ts"
   exclude:
     - "**/__pycache__/**"
     - "**/test_*.py"
