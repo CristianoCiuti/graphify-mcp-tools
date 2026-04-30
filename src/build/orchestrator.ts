@@ -100,6 +100,22 @@ export async function runBuild(config: Config, configDir: string, options: Build
 
   // Create output directory
   const outputDir = resolve(configDir, config.output);
+
+  // --force: clean output directory and per-repo graphify caches
+  if (options.force) {
+    if (existsSync(outputDir)) {
+      rmSync(outputDir, { recursive: true, force: true });
+      log.info(`Cleaned output: ${outputDir}`);
+    }
+    for (const repo of config.repos) {
+      const repoCache = resolve(configDir, repo.path, "graphify-out", "cache");
+      if (existsSync(repoCache)) {
+        rmSync(repoCache, { recursive: true, force: true });
+        log.info(`Cleaned cache: ${repoCache}`);
+      }
+    }
+  }
+
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
   }
