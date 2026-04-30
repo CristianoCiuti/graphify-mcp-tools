@@ -81,6 +81,7 @@ export interface BuildConfig {
   graphify_args: string[];
   html: boolean;
   html_min_degree?: number;
+  html_community_fallback: boolean;
   exclude: string[];
   mode: "monorepo" | "separate";
 }
@@ -234,6 +235,7 @@ export const DEFAULT_CONFIG: Config = {
   build: {
     graphify_args: [],
     html: true,
+    html_community_fallback: true,
     exclude: [],
     mode: "monorepo",
   },
