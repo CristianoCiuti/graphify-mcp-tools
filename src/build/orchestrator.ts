@@ -284,10 +284,18 @@ labels = {cid: f"Community {cid}" for cid in communities}
 questions = suggest_questions(G, communities, labels)
 
 # Generate report (always)
-generate_report(
-    G, communities, scores, gods, surprises, questions, labels,
-    output_path=str(out / "GRAPH_REPORT.md")
+# generate() signature: (G, communities, cohesion_scores, community_labels,
+#   god_node_list, surprise_list, detection_result, token_cost, root, suggested_questions=None) -> str
+# Build detection_result from graph metadata (required keys: total_files, total_words)
+file_nodes = [n for n, d in G.nodes(data=True) if d.get("type") == "file"]
+detection_result = {"total_files": len(file_nodes), "total_words": G.number_of_nodes() * 50}
+token_cost = {"input": 0, "output": 0}
+
+report_md = generate_report(
+    G, communities, scores, labels, gods, surprises,
+    detection_result, token_cost, ".", questions
 )
+(out / "GRAPH_REPORT.md").write_text(report_md, encoding="utf-8")
 print(f"  GRAPH_REPORT.md written")
 ${htmlBlock}
 `.trim();
