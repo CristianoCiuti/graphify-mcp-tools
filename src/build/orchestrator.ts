@@ -123,15 +123,26 @@ export async function runBuild(config: Config, configDir: string, options: Build
     const mode = config.build.mode;
     log.info(`Build mode: ${mode}`);
 
+    let postProcessBasePaths: string[];
+
     if (mode === "monorepo") {
-      await buildMonorepo(config, configDir, options, graphifyInfo, tmpDir, mergedPath);
+      const workspace = join(tmpDir, "workspace");
+      await buildMonorepo(config, configDir, options, graphifyInfo, tmpDir, mergedPath, workspace);
+      // In monorepo mode, source_file paths start with workspace prefix
+      postProcessBasePaths = [workspace];
     } else {
       await buildSeparate(config, configDir, options, graphifyInfo, tmpDir, outputDir, mergedPath);
+      postProcessBasePaths = config.repos.map((r) => resolve(configDir, r.path));
     }
 
     // 3. Post-process paths
-    const basePaths = config.repos.map((r) => resolve(configDir, r.path));
-    postProcess(mergedPath, basePaths);
+    postProcess(mergedPath, postProcessBasePaths);
+
+    // 3b. Tag nodes with repo name (monorepo: from first path component after normalization)
+    if (mode === "monorepo") {
+      const repoNames = config.repos.map((r) => r.name);
+      tagNodesWithRepo(mergedPath, repoNames);
+    }
 
     // 4. Post-build analysis (report + HTML visualization)
     runPostBuildAnalysis(mergedPath, outputDir, config, tmpDir);
@@ -176,8 +187,8 @@ async function buildMonorepo(
   graphifyInfo: GraphifyInfo,
   tmpDir: string,
   mergedPath: string,
+  workspace: string,
 ): Promise<void> {
-  const workspace = join(tmpDir, "workspace");
   mkdirSync(workspace, { recursive: true });
 
   // Symlink each repo into workspace/<repo_name>
@@ -243,7 +254,7 @@ async function buildMonorepo(
 
   // Copy to output and tag nodes with repo name
   copyFileSync(builtGraph, mergedPath);
-  tagNodesWithRepo(mergedPath, repoNames);
+  // NOTE: tagging happens after postProcess normalizes paths (called by runBuild)
   log.info(`✓ Unified graph: ${mergedPath}`);
 }
 
