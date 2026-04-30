@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { OutlineCache } from "../../outline/cache.js";
 import { formatOutlineMarkdown, formatOutlineJson } from "../../outline/formatter.js";
+import { getOutliner } from "../../outline/languages/index.js";
 import type { FileOutline } from "../../shared/types.js";
 
 const outlineCache = new OutlineCache();
@@ -29,43 +30,42 @@ export function handleOutline(_db: Database, graphDir: string, args: Record<stri
     } catch { /* fall through */ }
   }
 
-  // Try source file
+  // Try source file — generate outline on-the-fly using language registry
   const workspaceRoot = resolve(graphDir, "..");
   const absolutePath = resolve(workspaceRoot, filePath);
   if (!existsSync(absolutePath)) {
     return { content: [{ type: "text" as const, text: `File not found: ${filePath}` }] };
   }
 
+  // Detect language from file extension
+  const language = detectLanguage(filePath);
+  const outliner = getOutliner(language);
+  if (!outliner) {
+    return { content: [{ type: "text" as const, text: `No outline support for language: ${language} (${filePath})` }] };
+  }
+
   const source = readFileSync(absolutePath, "utf-8");
   const lineCount = source.split("\n").length;
-  const outline = simpleOutline(filePath, source, lineCount);
+  const outline = outliner(filePath, source, lineCount);
   outlineCache.set(filePath, outline);
   const text = format === "json" ? formatOutlineJson(outline) : formatOutlineMarkdown(outline);
   return { content: [{ type: "text" as const, text }] };
 }
 
-function simpleOutline(filePath: string, source: string, lineCount: number): FileOutline {
-  const lines = source.split("\n");
-  const imports: FileOutline["imports"] = [];
-  const functions: FileOutline["functions"] = [];
-  const classes: FileOutline["classes"] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const impMatch = /^(?:from\s+(\S+)\s+)?import\s+(.+)/.exec(line);
-    if (impMatch && !line.startsWith(" ") && !line.startsWith("\t")) {
-      imports.push({ module: impMatch[1] ?? impMatch[2]!, names: impMatch[1] ? impMatch[2]!.split(",").map((n) => n.trim()) : undefined, line: i + 1 });
-      continue;
-    }
-    const funcMatch = /^def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*(.+))?\s*:/.exec(line);
-    if (funcMatch) {
-      functions.push({ name: funcMatch[1]!, signature: `${funcMatch[1]}(${funcMatch[2]})${funcMatch[3] ? ` -> ${funcMatch[3]}` : ""}`, decorators: [], start_line: i + 1, end_line: i + 1, calls: [] });
-      continue;
-    }
-    const classMatch = /^class\s+(\w+)(?:\(([^)]*)\))?\s*:/.exec(line);
-    if (classMatch) {
-      classes.push({ name: classMatch[1]!, bases: classMatch[2] ? classMatch[2].split(",").map((b) => b.trim()) : [], start_line: i + 1, end_line: i + 1, methods: [] });
-    }
-  }
-  return { file_path: filePath, line_count: lineCount, imports, functions, classes };
+/**
+ * Detect language from file extension.
+ */
+function detectLanguage(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const extMap: Record<string, string> = {
+    py: "python",
+    java: "java",
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    scala: "scala",
+    kt: "kotlin",
+  };
+  return extMap[ext] ?? ext;
 }

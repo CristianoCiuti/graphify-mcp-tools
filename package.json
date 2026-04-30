@@ -25,19 +25,19 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "js-yaml": "^4.1.0",
     "sql.js": "^1.11.0",
-    "web-tree-sitter": "^0.24.0",
+    "web-tree-sitter": "^0.25.10",
     "yargs": "^17.7.0",
-    "zod": "^3.22.0",
-    "js-yaml": "^4.1.0"
+    "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "@types/yargs": "^17.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0",
-    "@types/yargs": "^17.0.0",
-    "@types/js-yaml": "^4.0.0",
-    "@types/node": "^20.0.0"
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=18"
