@@ -118,11 +118,12 @@ graphify-mcp-tools install --target claude
 graphify-mcp-tools install --target vscode
 ```
 
-The `install` command does three things for each target:
+The `install` command does four things for each target:
 
 1. **Registers the MCP server** — so the editor can call graph tools
 2. **Installs a hook/rule** — reminds the AI agent to use graph tools instead of manual file searches
 3. **Installs a skill file** — teaches the AI agent how to use each graph tool (parameters, use cases, best practices)
+4. **Writes the config file** — `graphify-tools.config.yml` inside the editor directory (e.g. `.opencode/graphify-tools.config.yml`)
 
 | Target | MCP Config | Hook/Rule | Skill |
 |--------|-----------|-----------|-------|
@@ -191,7 +192,7 @@ Hook (`.claude/settings.json`) — a `PreToolUse` hook that fires before bash co
 
 ## Configuration
 
-Create `graphify-tools.config.yml` in your project root for multi-repo builds:
+The `install` command writes `graphify-tools.config.yml` into the editor directory (e.g. `.opencode/graphify-tools.config.yml`). The config is auto-detected from editor directories, or you can pass `--config` explicitly.
 
 ```yaml
 output: graphify-out
@@ -204,6 +205,12 @@ repos:
 
 build:
   graphify_args: []
+  exclude:               # directory names to skip during detect
+    - "dist_package"
+    - "build_output"
+    - ".tox"
+  html: true             # generate graph.html visualization
+  html_min_degree: 3     # minimum degree for HTML subset (large graphs get filtered)
 
 outlines:
   enabled: true
@@ -221,14 +228,15 @@ outlines:
 Orchestrate graph builds across multiple repositories and merge results:
 
 ```bash
-graphify-mcp-tools build --config graphify-tools.config.yml
+graphify-mcp-tools build --config .opencode/graphify-tools.config.yml
 ```
 
 The build pipeline:
 1. For each repo: runs graphify's Python API (`detect` → `extract` → `build` → `cluster` → `to_json`) for initial builds, or `graphify update <path>` for incremental rebuilds
 2. Merges individual graphs via `graphify merge-graphs`
 3. Normalizes file paths across repos
-4. Generates the search index (`graph_search.db`)
+4. Runs post-build analysis: generates `GRAPH_REPORT.md` (always) and `graph.html` (if `html: true`)
+5. Generates the search index (`graph_search.db`)
 
 Requires graphify installed (`pip install graphifyy`). The MCP server itself does NOT require Python — only the `build` command does.
 

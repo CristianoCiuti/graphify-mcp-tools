@@ -8,6 +8,9 @@ import { runIndexer } from "./indexer.js";
 import { postProcess } from "./post-process.js";
 import { log } from "../shared/utils.js";
 
+/** Env vars for all Python subprocesses (Windows cp1252 fails on graphify Unicode output) */
+const PYTHON_ENV = { ...process.env, PYTHONIOENCODING: "utf-8" };
+
 export interface BuildOptions {
   force: boolean;
 }
@@ -23,12 +26,17 @@ export interface BuildOptions {
  *   while collect_files() does not, causing RecursionError on repos
  *   with virtualenvs containing deeply-nested C files.
  * - Uses forward slashes for paths (Python's Path handles both on Windows).
+ * - Monkey-patches _SKIP_DIRS with user-configured exclusions before detect().
  */
-function buildPythonScript(repoPath: string, outPath: string): string {
+function buildPythonScript(repoPath: string, outPath: string, excludeDirs: string[]): string {
   // Use forward slashes — Python Path handles them correctly on all platforms.
   // Backslash escaping through shell layers is error-prone on Windows.
   const pyRepoPath = repoPath.replace(/\\/g, "/");
   const pyOutPath = outPath.replace(/\\/g, "/");
+
+  const excludeBlock = excludeDirs.length > 0
+    ? `\nfrom graphify.detect import _SKIP_DIRS\nfor d in ${JSON.stringify(excludeDirs)}:\n    _SKIP_DIRS.add(d)\n`
+    : "";
 
   return `
 import sys, json
@@ -43,7 +51,7 @@ try:
 except ImportError:
     print("ERROR: graphify not importable", file=sys.stderr)
     sys.exit(1)
-
+${excludeBlock}
 path = Path("${pyRepoPath}")
 out = Path("${pyOutPath}")
 out.mkdir(parents=True, exist_ok=True)
@@ -123,13 +131,13 @@ export async function runBuild(config: Config, configDir: string, options: Build
           // Incremental: use `graphify update <path>` (re-extracts code, no LLM)
           const updateCmd = `${graphifyInfo.command} update "${repoPath}"`;
           log.debug(`  Incremental: ${updateCmd}`);
-          execSync(updateCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 600_000 });
+          execSync(updateCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 600_000, env: PYTHON_ENV });
           // Copy the updated graph to our temp dir
           copyFileSync(existingGraph, join(repoOutDir, "graph.json"));
         } else {
           // Initial build: write Python script to temp file and execute.
           // This avoids quoting/escaping issues with `python -c "..."` on Windows.
-          const script = buildPythonScript(repoPath, repoOutDir);
+          const script = buildPythonScript(repoPath, repoOutDir, config.build.exclude);
           const scriptPath = join(tmpDir, `${repo.name}_build.py`);
           writeFileSync(scriptPath, script);
           log.debug(`  Initial build via Python API (${scriptPath})`);
@@ -138,6 +146,7 @@ export async function runBuild(config: Config, configDir: string, options: Build
             stdio: ["pipe", "pipe", "pipe"],
             timeout: 600_000,
             cwd: repoPath,
+            env: PYTHON_ENV,
           });
           if (output.trim()) log.info(`  ${output.trim()}`);
         }
@@ -166,7 +175,7 @@ export async function runBuild(config: Config, configDir: string, options: Build
       const filesArg = repoGraphs.map((f) => `"${f}"`).join(" ");
       const mergeCmd = `${graphifyInfo.command} merge-graphs ${filesArg} --out "${mergedPath}"`;
       log.info("Merging graphs...");
-      execSync(mergeCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+      execSync(mergeCmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], env: PYTHON_ENV });
     } else {
       // Single repo - just copy
       copyFileSync(repoGraphs[0]!, mergedPath);
@@ -177,7 +186,10 @@ export async function runBuild(config: Config, configDir: string, options: Build
     const basePaths = config.repos.map((r) => resolve(configDir, r.path));
     postProcess(mergedPath, basePaths);
 
-    // 5. Generate search index
+    // 5. Post-build analysis (report + HTML visualization)
+    runPostBuildAnalysis(mergedPath, outputDir, config, tmpDir);
+
+    // 6. Generate search index
     await runIndexer(mergedPath, outputDir);
 
     log.info("");
@@ -191,5 +203,114 @@ export async function runBuild(config: Config, configDir: string, options: Build
     } catch {
       // Ignore cleanup errors
     }
+  }
+}
+
+/**
+ * Post-build analysis: generate GRAPH_REPORT.md and optionally graph.html.
+ *
+ * Writes a Python script that:
+ * 1. Loads graph.json into networkx
+ * 2. Runs cluster + score_all + god_nodes + surprising_connections + suggest_questions
+ * 3. Generates GRAPH_REPORT.md via report.generate()
+ * 4. If html enabled: generates graph.html via to_html() (filtered for large graphs)
+ */
+function runPostBuildAnalysis(mergedPath: string, outputDir: string, config: Config, tmpDir: string): void {
+  const pyMergedPath = mergedPath.replace(/\\/g, "/");
+  const pyOutputDir = outputDir.replace(/\\/g, "/");
+  const htmlEnabled = config.build.html;
+  const htmlMinDegree = config.build.html_min_degree;
+
+  const htmlBlock = htmlEnabled
+    ? `
+# HTML visualization
+from graphify.export import to_html
+
+threshold = ${htmlMinDegree}
+if G.number_of_nodes() <= 5000:
+    to_html(G, communities, str(out / "graph.html"))
+else:
+    while True:
+        subgraph_nodes = [n for n in G.nodes() if G.degree(n) >= threshold]
+        if len(subgraph_nodes) <= 5000:
+            break
+        threshold += 2
+    H = G.subgraph(subgraph_nodes).copy()
+    # Retain only community members present in subgraph
+    sub_communities = {}
+    node_set = set(H.nodes())
+    for cid, members in communities.items():
+        filtered = [m for m in members if m in node_set]
+        if filtered:
+            sub_communities[cid] = filtered
+    to_html(H, sub_communities, str(out / "graph.html"))
+    print(f"HTML: filtered to {H.number_of_nodes()} nodes (degree >= {threshold})")
+print(f"  graph.html written")
+`
+    : "";
+
+  const script = `
+import sys, json
+from pathlib import Path
+
+try:
+    from graphify.cluster import cluster
+    from graphify.analyze import score_all, god_nodes, surprising_connections, suggest_questions
+    from graphify.report import generate as generate_report
+    from graphify.build import build_from_json
+    import networkx as nx
+except ImportError as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+
+graph_path = Path("${pyMergedPath}")
+out = Path("${pyOutputDir}")
+
+# Load graph.json into networkx
+with open(graph_path) as f:
+    data = json.load(f)
+
+G = nx.DiGraph()
+for node in data.get("nodes", []):
+    G.add_node(node["id"], **{k: v for k, v in node.items() if k != "id"})
+for edge in data.get("edges", data.get("links", [])):
+    G.add_edge(edge["source"], edge["target"], **{k: v for k, v in edge.items() if k not in ("source", "target")})
+
+# Cluster and analyze
+communities = cluster(G)
+scores = score_all(G, communities)
+gods = god_nodes(G)
+surprises = surprising_connections(G, communities)
+labels = {cid: f"Community {cid}" for cid in communities}
+questions = suggest_questions(G, communities, labels)
+
+# Generate report (always)
+generate_report(
+    G, communities, scores, gods, surprises, questions, labels,
+    output_path=str(out / "GRAPH_REPORT.md")
+)
+print(f"  GRAPH_REPORT.md written")
+${htmlBlock}
+`.trim();
+
+  const scriptPath = join(tmpDir, "post_build_analysis.py");
+  writeFileSync(scriptPath, script);
+
+  log.info("Running post-build analysis...");
+  try {
+    const output = execSync(`python "${scriptPath}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 300_000,
+      env: PYTHON_ENV,
+    });
+    if (output.trim()) {
+      for (const line of output.trim().split("\n")) {
+        log.info(line);
+      }
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    log.warn(`Post-build analysis failed (non-fatal): ${msg}`);
   }
 }

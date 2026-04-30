@@ -12,6 +12,9 @@ const RepoConfigSchema = z.object({
 
 const BuildConfigSchema = z.object({
   graphify_args: z.array(z.string()).default([]),
+  html: z.boolean().default(true),
+  html_min_degree: z.number().int().min(1).default(3),
+  exclude: z.array(z.string()).default([]),
 });
 
 const OutlineConfigSchema = z.object({
@@ -61,7 +64,7 @@ export function loadConfig(configPath?: string): { config: Config; configDir: st
  * Resolve config file path using priority chain:
  * 1. Explicit path
  * 2. CWD / graphify-tools.config.yml
- * 3. Graph directory / graphify-tools.config.yml
+ * 3. Editor directory configs (.opencode/, .cursor/, .claude/, .vscode/)
  */
 function resolveConfigPath(explicitPath?: string): string | null {
   if (explicitPath) {
@@ -70,8 +73,16 @@ function resolveConfigPath(explicitPath?: string): string | null {
     throw new Error(`Config file not found: ${abs}`);
   }
 
+  // Check project root
   const cwdConfig = resolve(process.cwd(), "graphify-tools.config.yml");
   if (existsSync(cwdConfig)) return cwdConfig;
+
+  // Check editor directories
+  const editorDirs = [".opencode", ".cursor", ".claude", ".vscode"];
+  for (const dir of editorDirs) {
+    const editorConfig = resolve(process.cwd(), dir, "graphify-tools.config.yml");
+    if (existsSync(editorConfig)) return editorConfig;
+  }
 
   return null;
 }

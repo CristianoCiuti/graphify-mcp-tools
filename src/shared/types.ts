@@ -80,6 +80,9 @@ export interface RepoConfig {
 
 export interface BuildConfig {
   graphify_args: string[];
+  html: boolean;
+  html_min_degree: number;
+  exclude: string[];
 }
 
 export interface OutlineConfig {
@@ -235,6 +238,9 @@ export const DEFAULT_CONFIG: Config = {
   repos: [],
   build: {
     graphify_args: [],
+    html: true,
+    html_min_degree: 3,
+    exclude: [],
   },
   outlines: {
     enabled: true,

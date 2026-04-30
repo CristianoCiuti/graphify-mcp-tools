@@ -5,6 +5,58 @@ import { checkGraphify } from "../shared/system-checks.js";
 
 type Target = "opencode" | "cursor" | "claude" | "vscode";
 
+// ─── Default config YAML (written into editor directory) ─────────────────────
+
+const DEFAULT_CONFIG_YAML = `# graphify-tools.config.yml
+# Configuration for graphify-mcp-tools
+
+# Output directory (relative to project root)
+output: graphify-out
+
+# Repositories to include in multi-repo build
+repos:
+  - name: my-project
+    path: ..
+
+# Build options
+build:
+  graphify_args: []
+  exclude: []            # directory names to skip during detect (e.g. dist_package, .tox)
+  html: true             # generate graph.html visualization after build
+  html_min_degree: 3     # minimum node degree for HTML subset (graphs >5000 nodes get filtered)
+
+# Outline options
+outlines:
+  enabled: true
+  language: python
+  paths:
+    - "src/**/*.py"
+  exclude:
+    - "**/__pycache__/**"
+    - "**/test_*.py"
+    - "**/.git/**"
+
+# Search index options
+search:
+  enabled: true
+  fields:
+    - label
+    - type
+    - source_file
+    - properties
+`;
+
+/**
+ * Write config file into the editor directory if it doesn't already exist.
+ */
+function writeConfigFile(editorDir: string): string | null {
+  const configPath = join(editorDir, "graphify-tools.config.yml");
+  if (existsSync(configPath)) return null; // Don't overwrite existing
+  if (!existsSync(editorDir)) mkdirSync(editorDir, { recursive: true });
+  writeFileSync(configPath, DEFAULT_CONFIG_YAML);
+  return configPath;
+}
+
 // ─── Skill content ───────────────────────────────────────────────────────────
 
 const SKILL_MD = `---
@@ -267,9 +319,13 @@ function installOpenCode(graphDir: string): void {
   if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true });
   writeFileSync(skillPath, SKILL_MD);
 
+  // 5. Write config file
+  const configWritten = writeConfigFile(configDir);
+
   console.log(`\u2713 OpenCode MCP server registered: ${configPath}`);
   console.log(`\u2713 OpenCode plugin installed: ${pluginPath}`);
   console.log(`\u2713 OpenCode skill installed: ${skillPath}`);
+  if (configWritten) console.log(`\u2713 Config file created: ${configWritten}`);
   console.log("");
   console.log("  The MCP server starts automatically with OpenCode.");
   console.log("  The plugin reminds the agent to use graph tools before searching.");
@@ -307,8 +363,12 @@ function installCursor(graphDir: string): void {
   if (!existsSync(rulesDir)) mkdirSync(rulesDir, { recursive: true });
   writeFileSync(rulePath, CURSOR_RULE);
 
+  // 3. Write config file
+  const configWritten = writeConfigFile(mcpDir);
+
   console.log(`\u2713 Cursor MCP server registered: ${mcpPath}`);
   console.log(`\u2713 Cursor rule/skill installed: ${rulePath}`);
+  if (configWritten) console.log(`\u2713 Config file created: ${configWritten}`);
   console.log("");
   console.log("  Restart Cursor for changes to take effect.");
 }
@@ -361,9 +421,13 @@ function installClaude(graphDir: string): void {
   if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true });
   writeFileSync(skillPath, SKILL_MD);
 
-  // 3. Print MCP add command (Claude manages MCP via CLI)
+  // 3. Write config file
+  const configWritten = writeConfigFile(claudeDir);
+
+  // 4. Print MCP add command (Claude manages MCP via CLI)
   console.log(`\u2713 Claude PreToolUse hook installed: ${settingsPath}`);
   console.log(`\u2713 Claude skill installed: ${skillPath}`);
+  if (configWritten) console.log(`\u2713 Config file created: ${configWritten}`);
   console.log("");
   console.log("  To also register the MCP server, run:");
   console.log(`  claude mcp add graphify -- npx -y graphify-mcp-tools mcp --graph ${graphDir}`);
@@ -414,8 +478,12 @@ function installVSCode(graphDir: string): void {
   content += VSCODE_SECTION;
   writeFileSync(instructionsPath, content);
 
+  // 3. Write config file
+  const configWritten = writeConfigFile(vscodeDir);
+
   console.log(`\u2713 VS Code MCP server registered: ${mcpPath}`);
   console.log(`\u2713 Copilot skill/instructions installed: ${instructionsPath}`);
+  if (configWritten) console.log(`\u2713 Config file created: ${configWritten}`);
   console.log("");
   console.log("  Ensure the GitHub Copilot extension is installed for MCP support.");
 }
