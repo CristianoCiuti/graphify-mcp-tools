@@ -7,7 +7,7 @@
 > All future development, bug fixes, and new features will happen in the new repository.
 > This package will no longer receive updates.
 >
-> **👉 Please migrate to [reponova](https://github.com/CristianoCiuti/reponova)**
+> **👉 Please migrate to [reponova](https://github.com/CristianoCiuti/reponova)** — also on [npm](https://www.npmjs.com/package/reponova)
 
 ---
 
