@@ -1,9 +1,15 @@
 # graphify-mcp-tools
 
-> **⚠️ Alpha — Active Development**
-> This package is under active development. APIs, config format, and CLI may change between releases.
-> It's already usable, but expect rough edges. If you find a bug or something doesn't work as expected,
-> please [open an issue](https://github.com/CristianoCiuti/graphify-mcp-tools/issues) — it helps a lot.
+> ## ⛔ This repository is deprecated
+>
+> **This project has been superseded by [reponova](https://github.com/CristianoCiuti/reponova).**
+>
+> All future development, bug fixes, and new features will happen in the new repository.
+> This package will no longer receive updates.
+>
+> **👉 Please migrate to [reponova](https://github.com/CristianoCiuti/reponova)**
+
+---
 
 MCP server companion for [Graphify](https://github.com/safishamsi/graphify): exposes knowledge graphs as searchable, queryable tools for AI agents.
 
